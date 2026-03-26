@@ -1,7 +1,14 @@
 package com.laespada.wazzerwatch.presentation
 
 import android.app.Activity
+import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -41,14 +48,46 @@ class ArmMovementActivity : ComponentActivity() {
 @Composable
 fun EmergencyScreen() {
     val activity = LocalContext.current as Activity
+    val context = LocalContext.current
     var countdown by remember { mutableIntStateOf(15) }
     var emergencySent by remember { mutableStateOf(false) }
 
+
+    val toneGenerator = remember { ToneGenerator(AudioManager.STREAM_ALARM, 100) }
+
+    val vibrator = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vibratorManager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            vibrator.cancel()
+            toneGenerator.release()
+        }
+    }
+
     LaunchedEffect(Unit) {
         while (countdown > 0) {
-            delay(1000)
+
+            toneGenerator.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 500)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(500)
+            }
+
+            delay(1000) 
             countdown--
         }
+
         if (countdown == 0 && !emergencySent) {
             sendEmergencyNotification()
             emergencySent = true
@@ -77,7 +116,7 @@ fun EmergencyScreen() {
                             Text("SMS in: $countdown sec", color = Color.White)
                             Spacer(modifier = Modifier.height(8.dp))
                             Button(
-                                onClick = { activity.finish() }, // Затваряме червения екран
+                                onClick = { activity.finish() },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.White)
                             ) {
                                 Text("I'M OKAY", color = Color.Black)
