@@ -40,9 +40,9 @@ android {
 }
 
 dependencies {
-    // health services
-    implementation("andoid.health:health-services-client:1.0.0-rc02")
-    implementation("org.jetbrains.kotlin:kotlin-coroutines-android:1.7.3")
+// health services
+    implementation("androidx.health:health-services-client:1.0.0-rc02")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 
     implementation(libs.play.services.wearable)
     implementation(platform(libs.compose.bom))
