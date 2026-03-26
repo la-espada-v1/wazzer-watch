@@ -14,7 +14,7 @@ android {
     defaultConfig {
         applicationId = "com.laespada.wazzerwatch"
         minSdk = 30
-        targetSdk = 36
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
 
