@@ -1,7 +1,13 @@
 package com.laespada.wazzerwatch.presentation
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -34,48 +40,35 @@ import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.sqrt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            WearApp()
-        }
+        setContent { WearApp() }
     }
 }
 
 @Composable
 fun WearApp() {
     val context = LocalContext.current
-
     var isMeasuring by remember { mutableStateOf(false) }
     var heartRate by remember { mutableDoubleStateOf(0.0) }
 
-    // 1. Define BOTH required permissions for Health Services
-    val requiredPermissions = arrayOf(
-        Manifest.permission.BODY_SENSORS,
-        Manifest.permission.ACTIVITY_RECOGNITION
-    )
-
-    // 2. Check if both are already granted
-    var hasPermissions by remember {
-        mutableStateOf(
-            requiredPermissions.all {
-                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-            }
-        )
+    var hasPermission by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.BODY_SENSORS) == PackageManager.PERMISSION_GRANTED)
     }
 
-    // 3. Use RequestMultiplePermissions to ask for both simultaneously
     val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-        onResult = { permissionsMap ->
-            // Only proceed if the user grants ALL requested permissions
-            hasPermissions = permissionsMap.values.all { it }
-        }
-    )
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasPermission = granted
+        if (granted) isMeasuring = true
+    }
 
     val measureClient = remember { HealthServices.getClient(context).measureClient }
+    val sensorManager = remember { context.getSystemService(Context.SENSOR_SERVICE) as SensorManager }
+    val accelerometer = remember { sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) }
 
     val measureCallback = remember {
         object : MeasureCallback {
@@ -85,29 +78,34 @@ fun WearApp() {
                 if (hrData.isNotEmpty()) {
                     val currentHr = hrData.last().value
                     heartRate = currentHr
-                    Log.d("PULSE", "Measured pulse: $currentHr")
                     sendDataToServer(currentHr)
                 }
             }
         }
     }
 
-    // 4. Added hasPermissions to the key, and wrapped API calls in try/catch blocks
-    LaunchedEffect(isMeasuring, hasPermissions) {
-        if (isMeasuring && hasPermissions) {
-            try {
-                measureClient.registerMeasureCallback(DataType.HEART_RATE_BPM, measureCallback)
-            } catch (e: Exception) {
-                Log.e("SENSOR_ERROR", "Failed to start sensor: ${e.message}")
-                isMeasuring = false // Automatically toggle the button off if it fails
+    val motionListener = remember {
+        object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent?) {
+                if (event?.sensor?.type == Sensor.TYPE_ACCELEROMETER) {
+                    val gForce = sqrt((event.values[0] * event.values[0] + event.values[1] * event.values[1] + event.values[2] * event.values[2]).toDouble())
+                    if (gForce > 30.0) {
+                        isMeasuring = false
+                        context.startActivity(Intent(context, ArmMovementActivity::class.java))
+                    }
+                }
             }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+    }
+
+    LaunchedEffect(isMeasuring) {
+        if (isMeasuring && hasPermission) {
+            measureClient.registerMeasureCallback(DataType.HEART_RATE_BPM, measureCallback)
+            sensorManager.registerListener(motionListener, accelerometer, SensorManager.SENSOR_DELAY_NORMAL)
         } else {
-            try {
-                // The try-catch prevents the app from crashing on startup when it tries to unregister an empty callback
-                measureClient.unregisterMeasureCallbackAsync(DataType.HEART_RATE_BPM, measureCallback)
-            } catch (e: Exception) {
-                Log.e("SENSOR_ERROR", "Failed to stop sensor: ${e.message}")
-            }
+            measureClient.unregisterMeasureCallbackAsync(DataType.HEART_RATE_BPM, measureCallback)
+            sensorManager.unregisterListener(motionListener)
             heartRate = 0.0
         }
     }
@@ -120,28 +118,23 @@ fun WearApp() {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    if (!hasPermissions) {
-                        Text("Need permissions")
-                        Button(onClick = { permissionLauncher.launch(requiredPermissions) }) {
-                            Text("Give access")
-                        }
-                    } else {
-                        Text(
-                            text = if (heartRate > 0) "${heartRate.toInt()} BPM" else "waiting data",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary
+                    Text(
+                        text = if (heartRate > 0) "${heartRate.toInt()} BPM" else "Waiting data...",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            if (isMeasuring) isMeasuring = false
+                            else if (hasPermission) isMeasuring = true
+                            else permissionLauncher.launch(Manifest.permission.BODY_SENSORS)
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isMeasuring) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         )
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Button(
-                            onClick = { isMeasuring = !isMeasuring },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isMeasuring) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Text(if (isMeasuring) "STOP" else "START MEASURING")
-                        }
+                    ) {
+                        Text(if (isMeasuring) "STOP" else "START MEASURING")
                     }
                 }
             }
@@ -156,21 +149,16 @@ fun sendDataToServer(heartRate: Double) {
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json; utf-8")
-            conn.setRequestProperty("Accept", "application/json")
             conn.doOutput = true
-
-            val jsonParam = JSONObject()
-            jsonParam.put("heart_rate", heartRate)
-
+            val jsonParam = JSONObject().apply { put("heart_rate", heartRate) }
             val os = OutputStreamWriter(conn.outputStream)
             os.write(jsonParam.toString())
             os.flush()
             os.close()
-
-            Log.d("NETWORK", "Successful request. Server returned code: ${conn.responseCode}")
+            conn.responseCode
             conn.disconnect()
         } catch (e: Exception) {
-            Log.e("NETWORK", "Error with requesting: ${e.message}")
+            Log.e("NETWORK", "Error server: ${e.message}")
         }
     }
 }
