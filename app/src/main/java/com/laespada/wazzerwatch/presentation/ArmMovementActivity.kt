@@ -84,7 +84,7 @@ fun EmergencyScreen() {
                 vibrator.vibrate(500)
             }
 
-            delay(1000) 
+            delay(1000)
             countdown--
         }
 
