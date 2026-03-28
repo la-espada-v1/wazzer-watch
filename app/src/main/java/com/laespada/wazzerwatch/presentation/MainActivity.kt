@@ -42,6 +42,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.sqrt
 
+const val SERVER_BASE_URL = "http://192.168.1.2:5000/shower"
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,7 +65,10 @@ fun WearApp() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasPermission = granted
-        if (granted) isMeasuring = true
+        if (granted) {
+            isMeasuring = true
+            sendCommandToServer("start")
+        }
     }
 
     val measureClient = remember { HealthServices.getClient(context).measureClient }
@@ -78,7 +83,7 @@ fun WearApp() {
                 if (hrData.isNotEmpty()) {
                     val currentHr = hrData.last().value
                     heartRate = currentHr
-                    sendDataToServer(currentHr)
+                    sendHeartRateToServer(currentHr)
                 }
             }
         }
@@ -91,6 +96,7 @@ fun WearApp() {
                     val gForce = sqrt((event.values[0] * event.values[0] + event.values[1] * event.values[1] + event.values[2] * event.values[2]).toDouble())
                     if (gForce > 30.0) {
                         isMeasuring = false
+                        sendCommandToServer("stop")
                         context.startActivity(Intent(context, ArmMovementActivity::class.java))
                     }
                 }
@@ -126,9 +132,15 @@ fun WearApp() {
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = {
-                            if (isMeasuring) isMeasuring = false
-                            else if (hasPermission) isMeasuring = true
-                            else permissionLauncher.launch(Manifest.permission.BODY_SENSORS)
+                            if (isMeasuring) {
+                                isMeasuring = false
+                                sendCommandToServer("stop")
+                            } else if (hasPermission) {
+                                isMeasuring = true
+                                sendCommandToServer("start")
+                            } else {
+                                permissionLauncher.launch(Manifest.permission.BODY_SENSORS)
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (isMeasuring) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
@@ -142,23 +154,42 @@ fun WearApp() {
     }
 }
 
-fun sendDataToServer(heartRate: Double) {
+fun sendHeartRateToServer(bpm: Double) {
     kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
         try {
-            val url = URL("http://192.168.1.2:5000/measures")
+            val url = URL("$SERVER_BASE_URL/bpm")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json; utf-8")
             conn.doOutput = true
-            val jsonParam = JSONObject().apply { put("heart_rate", heartRate) }
+
+            // Updated key from "heart_rate" to "bpm" to match the Flask backend
+            val jsonParam = JSONObject().apply { put("bpm", bpm) }
+
             val os = OutputStreamWriter(conn.outputStream)
             os.write(jsonParam.toString())
             os.flush()
             os.close()
+
             conn.responseCode
             conn.disconnect()
         } catch (e: Exception) {
-            Log.e("NETWORK", "Error server: ${e.message}")
+            Log.e("NETWORK", "Error server (BPM): ${e.message}")
+        }
+    }
+}
+
+fun sendCommandToServer(endpoint: String) {
+    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+        try {
+            val url = URL("$SERVER_BASE_URL/$endpoint")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+
+            conn.responseCode
+            conn.disconnect()
+        } catch (e: Exception) {
+            Log.e("NETWORK", "Error server ($endpoint): ${e.message}")
         }
     }
 }
